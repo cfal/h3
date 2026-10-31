@@ -26,6 +26,94 @@ use crate::{
 use super::h3_quinn;
 use super::{init_tracing, Pair};
 
+fn oversized_headers_prefix() -> Bytes {
+    let mut header = BytesMut::new();
+    VarInt::from_u32(1).encode(&mut header);
+    VarInt::from_u32(2 * 1024 * 1024).encode(&mut header);
+    header.freeze()
+}
+
+#[tokio::test]
+async fn default_server_rejects_oversized_frame_before_payload() {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        let mut pair = Pair::default();
+        let mut server = pair.server();
+        let (done, rejected) = tokio::sync::oneshot::channel();
+        let client_fut = async {
+            let connection = pair.client_inner().await;
+            let mut control = connection.open_uni().await.unwrap();
+            control.write_all(&[0, 4, 0]).await.unwrap();
+            let (mut send, _recv) = connection.open_bi().await.unwrap();
+            send.write_all(&oversized_headers_prefix()).await.unwrap();
+            rejected.await.unwrap();
+            connection.close(0u32.into(), b"done");
+        };
+        let server_fut = async {
+            let mut connection = server::builder()
+                .build::<_, Bytes>(server.next().await)
+                .await
+                .unwrap();
+            let request = connection.accept().await.unwrap().unwrap();
+            assert_matches!(
+                request.resolve_request().await.err().unwrap(),
+                StreamError::HeaderTooBig {
+                    actual_size: 2_097_152,
+                    max_size: 1_048_576,
+                }
+            );
+            done.send(()).unwrap();
+        };
+        tokio::join!(client_fut, server_fut);
+    })
+    .await
+    .expect("server waited for an oversized frame payload");
+}
+
+#[tokio::test]
+async fn default_client_rejects_oversized_frame_before_payload() {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        let mut pair = Pair::default();
+        let server = pair.server_inner();
+        let (done, rejected) = tokio::sync::oneshot::channel();
+        let client_fut = async {
+            let (mut driver, mut client) = client::new(pair.client().await).await.unwrap();
+            let request_fut = async {
+                let mut request = client
+                    .send_request(Request::get("https://localhost/").body(()).unwrap())
+                    .await
+                    .unwrap();
+                request.finish().await.unwrap();
+                assert_matches!(
+                    request.recv_response().await,
+                    Err(StreamError::HeaderTooBig {
+                        actual_size: 2_097_152,
+                        max_size: 1_048_576,
+                    })
+                );
+                done.send(()).unwrap();
+            };
+            tokio::select! {
+                biased;
+                _ = request_fut => (),
+                result = driver.wait_idle() => panic!("driver exited before rejection: {result:?}"),
+            }
+        };
+        let server_fut = async {
+            let connection = server.accept().await.unwrap().await.unwrap();
+            let mut control = connection.open_uni().await.unwrap();
+            control.write_all(&[0, 4, 0]).await.unwrap();
+            let (mut send, mut recv) = connection.accept_bi().await.unwrap();
+            recv.read_to_end(16 * 1024).await.unwrap();
+            send.write_all(&oversized_headers_prefix()).await.unwrap();
+            rejected.await.unwrap();
+            connection.close(0u32.into(), b"done");
+        };
+        tokio::join!(client_fut, server_fut);
+    })
+    .await
+    .expect("client waited for an oversized frame payload");
+}
+
 #[tokio::test]
 async fn get() {
     init_tracing();

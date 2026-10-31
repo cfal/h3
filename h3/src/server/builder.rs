@@ -66,7 +66,10 @@ impl Builder {
         self
     }
 
-    /// Set the maximum header size this client is willing to accept
+    /// Set the maximum header size this server is willing to accept
+    ///
+    /// Defaults to 64 KiB of decoded fields, including overhead.
+    /// Buffered request frames are limited to the larger of this value and 1 MiB.
     ///
     /// See [header size constraints] section of the specification for details.
     ///

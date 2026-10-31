@@ -2,6 +2,8 @@ use std::convert::TryFrom;
 
 use crate::proto::{frame, varint::VarInt};
 
+const DEFAULT_MAX_FIELD_SECTION_SIZE: u64 = 64 * 1024;
+
 /// Configures the HTTP/3 connection
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
@@ -22,11 +24,7 @@ pub struct Config {
 /// HTTP/3 Settings
 #[derive(Debug, Clone, Copy)]
 pub struct Settings {
-    /// The MAX_FIELD_SECTION_SIZE in HTTP/3 refers to the maximum size of the dynamic table used in HPACK compression.
-    /// HPACK is the compression algorithm used in HTTP/3 to reduce the size of the header fields in HTTP requests and responses.
-
-    /// In HTTP/3, the MAX_FIELD_SECTION_SIZE is set to 12.
-    /// This means that the dynamic table used for HPACK compression can have a maximum size of 2^12 bytes, which is 4KB.
+    /// Maximum decoded field-section size, including the 32-byte overhead per field.
     pub(crate) max_field_section_size: u64,
 
     /// https://datatracker.ietf.org/doc/html/draft-ietf-webtrans-http3/#section-3.1
@@ -173,7 +171,35 @@ impl Default for Config {
             send_grease: true,
             #[cfg(test)]
             send_settings: true,
-            settings: Default::default(),
+            // Peer settings retain the RFC's unlimited initial value; local
+            // receive limits must also keep the buffered-frame ceiling finite.
+            settings: Settings {
+                max_field_section_size: DEFAULT_MAX_FIELD_SECTION_SIZE,
+                ..Settings::default()
+            },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_header_limit_is_finite_and_advertised() {
+        let config = Config::default();
+        assert_eq!(config.settings.max_field_section_size, 64 * 1024);
+        let wire = frame::Settings::try_from(config).unwrap();
+        assert_eq!(
+            wire.get(frame::SettingId::MAX_HEADER_LIST_SIZE),
+            Some(64 * 1024)
+        );
+    }
+
+    #[test]
+    fn omitted_peer_header_limit_remains_unlimited() {
+        assert_eq!(Settings::default().max_field_section_size, VarInt::MAX.0);
+        let peer = Settings::from(&frame::Settings::default());
+        assert_eq!(peer.max_field_section_size, VarInt::MAX.0);
     }
 }

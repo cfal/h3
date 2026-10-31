@@ -1,3 +1,8 @@
+### Unreleased
+
+* Reject oversized buffered frames from their declared length and discard unknown frames incrementally (backport of hyperium/h3#366).
+* Default local decoded field-section limits to 64 KiB so default request and response streams retain the 1 MiB buffered-frame ceiling. Peer settings still default to unlimited until advertised. Applications can raise their local limit with `max_field_section_size`.
+
 ### v0.0.8 (2025-05-06)
 * fix integer overflow when parsing qpack prefixed integers
 * introduce new user facing error types 

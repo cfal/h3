@@ -80,6 +80,9 @@ impl Builder {
 
     /// Set the maximum header size this client is willing to accept
     ///
+    /// Defaults to 64 KiB of decoded fields, including overhead.
+    /// Buffered frames are limited to the larger of this value and 1 MiB.
+    ///
     /// See [header size constraints] section of the specification for details.
     ///
     /// [header size constraints]: https://www.rfc-editor.org/rfc/rfc9114.html#name-header-size-constraints
