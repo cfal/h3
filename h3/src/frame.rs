@@ -50,6 +50,10 @@ impl<S, B> FrameStream<S, B> {
         }
     }
 
+    pub(crate) fn set_max_buffered_frame(&mut self, max_buffered_frame: u64) {
+        self.decoder.max_buffered = max_buffered_frame;
+    }
+
     /// Unwraps the Framed streamer and returns the underlying stream **without** data loss for
     /// partially received/read frames.
     pub fn into_inner(self) -> BufRecvStream<S, B> {

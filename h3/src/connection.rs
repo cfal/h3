@@ -1001,16 +1001,15 @@ where
             //# connection error of type H3_FRAME_UNEXPECTED.
 
             match self.stream.poll_next(cx) {
+                Poll::Ready(Err(FrameStreamError::PayloadTooLarge { frame_type, .. })) => {
+                    return Poll::Ready(Err(self.handle_connection_error_on_stream(
+                        InternalConnectionError::new(
+                            Code::H3_FRAME_UNEXPECTED,
+                            format!("unexpected frame type after trailers: {frame_type:#x}"),
+                        ),
+                    )));
+                }
                 Poll::Ready(Err(frame_stream_error)) => {
-                    if matches!(
-                        frame_stream_error,
-                        FrameStreamError::PayloadTooLarge {
-                            frame_type: 0x1,
-                            ..
-                        }
-                    ) {
-                        self.stream.stop_sending(Code::H3_REQUEST_CANCELLED);
-                    }
                     return Poll::Ready(Err(
                         self.handle_frame_stream_error_on_request_stream(frame_stream_error)
                     ));

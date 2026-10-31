@@ -127,11 +127,7 @@ where
     pub async fn accept(&mut self) -> Result<Option<RequestResolver<C, B>>, ConnectionError> {
         // Accept the incoming stream
         let stream = match poll_fn(|cx| self.poll_accept_request_stream_internal(cx)).await? {
-            Some(s) => FrameStream::new_with_max_buffered_frame(
-                BufRecvStream::new(s),
-                self.max_field_section_size
-                    .max(crate::frame::DEFAULT_MAX_BUFFERED_FRAME),
-            ),
+            Some(s) => FrameStream::new(BufRecvStream::new(s)),
             None => {
                 // We always send a last GoAway frame to the client, so it knows which was the last
                 // non-rejected request.
@@ -147,8 +143,12 @@ where
 
     fn create_resolver_internal(
         &mut self,
-        stream: FrameStream<C::BidiStream, B>,
+        mut stream: FrameStream<C::BidiStream, B>,
     ) -> RequestResolver<C, B> {
+        stream.set_max_buffered_frame(
+            self.max_field_section_size
+                .max(crate::frame::DEFAULT_MAX_BUFFERED_FRAME),
+        );
         let send_grease_frame = self.inner.send_grease_frame;
         // send the grease frame only once per connection
         self.inner.send_grease_frame = false;

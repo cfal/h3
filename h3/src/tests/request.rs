@@ -174,6 +174,75 @@ async fn get() {
     tokio::join!(server_fut, client_fut);
 }
 
+#[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
+#[tokio::test]
+async fn buffered_frame_limit_applies_to_extension_resolvers() {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        let mut pair = Pair::default();
+        let mut server = pair.server();
+        let (done, accepted) = tokio::sync::oneshot::channel();
+        let client_fut = async {
+            let connection = pair.client_inner().await;
+            let mut control = connection.open_uni().await.unwrap();
+            control.write_all(&[0, 4, 0]).await.unwrap();
+            let mut frame = BytesMut::new();
+            request_encode(
+                &mut frame,
+                Request::get("https://localhost/")
+                    .header("x-padding", "x".repeat(1536 * 1024))
+                    .body(())
+                    .unwrap(),
+            );
+            assert!(frame.len() > 1024 * 1024);
+            let (mut send, _recv) = connection.open_bi().await.unwrap();
+            send.write_all(&frame).await.unwrap();
+            accepted.await.unwrap();
+            connection.close(0u32.into(), b"done");
+        };
+        let server_fut = async {
+            let mut connection = server::builder()
+                .max_field_section_size(2 * 1024 * 1024)
+                .build::<_, Bytes>(server.next().await)
+                .await
+                .unwrap();
+            let stream = future::poll_fn(|cx| connection.poll_accept_request_stream(cx))
+                .await
+                .unwrap()
+                .unwrap();
+            // WebTransport uses this entry point before classifying the first frame.
+            let mut resolver = connection.create_resolver(crate::frame::FrameStream::new(
+                crate::stream::BufRecvStream::new(stream),
+            ));
+            let frame = future::poll_fn(|cx| resolver.frame_stream.poll_next(cx)).await;
+            let (request, _stream) = resolver
+                .accept_with_frame(frame)
+                .unwrap()
+                .resolve()
+                .await
+                .unwrap();
+            assert_eq!(request.headers()["x-padding"].len(), 1536 * 1024);
+            done.send(()).unwrap();
+        };
+        tokio::join!(client_fut, server_fut);
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn buffered_frame_after_trailers_is_connection_error() {
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        request_sequence_unexpected(|buf| {
+            request_encode(buf, Request::get("https://localhost/").body(()).unwrap());
+            trailers_encode(&mut *buf, HeaderMap::new());
+            buf.extend_from_slice(&oversized_headers_prefix());
+        }),
+    )
+    .await
+    .unwrap();
+}
+
 #[tokio::test]
 async fn get_with_trailers_unknown_content_type() {
     init_tracing();

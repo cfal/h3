@@ -110,11 +110,12 @@ pub enum StreamError {
         non_exhaustive
     )]
     ConnectionError(ConnectionError),
-    /// Error is used when violating the MAX_FIELD_SECTION_SIZE
+    /// A header block exceeds the field-section policy or receive-buffer limit.
     ///
-    /// This can mean different things depending on the context
-    /// When sending a request, this means, that the request cannot be sent because the header is larger then permitted by the server
-    /// When receiving a request, this means, that the server sent a
+    /// Send-side checks compare decoded field sizes against the peer's advertised
+    /// limit; decoded receive checks compare them against the local policy.
+    /// Rejection before buffering instead reports the declared encoded length
+    /// in `actual_size` and the buffered-frame ceiling in `max_size`.
     #[cfg_attr(
         not(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"),
         non_exhaustive
